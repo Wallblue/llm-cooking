@@ -152,6 +152,9 @@ class RecipeDatasetExplorer:
                 steps = eval(row['steps']) if 'steps' in row and isinstance(row['steps'], str) else []
                 
                 text = f"### Recette: {row['name']}\n\n"
+
+                text += f"Temps de préparation: {row['minutes']} minutes\n\n"
+
                 text += f"**Ingrédients:**\n"
                 for ing in ingredients:
                     text += f"- {ing}\n"

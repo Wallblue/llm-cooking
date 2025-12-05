@@ -1,9 +1,11 @@
+import unidecode
 import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import pickle
 from typing import List, Dict
+import spacy
 
 # ============================================
 # PHASE 2 : SYSTÈME RAG - MATCHING D'INGRÉDIENTS
@@ -17,7 +19,7 @@ class RecipeRAGSystem:
     RAG = Retrieval-Augmented Generation
     """
     
-    def __init__(self, model_name='all-MiniLM-L6-v2'):
+    def __init__(self, model_name='all-mpnet-base-v2'):
         """
         Initialise le système RAG
         
@@ -25,6 +27,7 @@ class RecipeRAGSystem:
             model_name: Modèle de sentence transformers à utiliser
                 'all-MiniLM-L6-v2' = rapide, léger (80MB)
                 'all-mpnet-base-v2' = meilleur qualité mais plus lourd
+                'paraphrase-multilingual-MiniLM-L12-v2' = multilingue
         """
         print("🤖 Initialisation du système RAG...")
         print(f"   Modèle: {model_name}")
@@ -33,18 +36,24 @@ class RecipeRAGSystem:
         self.model = SentenceTransformer(model_name)
         
         self.recipes_df = None
-        self.embeddings = None
+        self.name_embeddings = None
+        self.ingredients_embeddings = None
         self.ingredient_index = {}
+        self.nlp = spacy.load('en_core_web_sm')
         
         print("✓ Système initialisé")
+    
+    def clean_text(self, text):
+        """Nettoie le texte en enlevant les accents et en minuscules"""
+        return " ".join([token.lemma_ for token in self.nlp(unidecode.unidecode(text).lower().strip())])
     
     def load_recipes(self, recipes_path=f'{RECIPES_FOLDER}recipes_prepared_sample.csv'):
         """Charge les recettes préparées"""
         print(f"\n📂 Chargement des recettes depuis {recipes_path}...")
         self.recipes_df = pd.read_csv(recipes_path)
         
-        # Parser les ingrédients si nécessaire
-        def parse_ingredients(ing):
+        # Parser la liste stringifiée en liste Python
+        def parse_stringified_list(ing):
             try:
                 if isinstance(ing, str):
                     return eval(ing)
@@ -53,69 +62,67 @@ class RecipeRAGSystem:
                 return []
         
         if 'ingredients' in self.recipes_df.columns:
-            self.recipes_df['ingredients_list'] = self.recipes_df['ingredients'].apply(parse_ingredients)
+            self.recipes_df['ingredients_list'] = self.recipes_df['ingredients'].apply(parse_stringified_list)
         
         if 'steps' in self.recipes_df.columns:
-            self.recipes_df['steps_list'] = self.recipes_df['steps'].apply(parse_ingredients)
+            self.recipes_df['steps_list'] = self.recipes_df['steps'].apply(parse_stringified_list)
         
         print(f"✓ {len(self.recipes_df)} recettes chargées")
         return self.recipes_df
     
-    def create_embeddings(self, save_path='recipe_embeddings.pkl'):
+
+    def create_embeddings(self, save_path='recipes_prepared_sample_embeddings.pkl'):
         """
-        Crée les embeddings vectoriels de toutes les recettes
-        Cette étape peut prendre du temps sur le dataset complet
+        Crée les embeddings vectoriels séparément pour le nom et les ingrédients des recettes.
+        Cette étape peut prendre du temps sur le dataset complet.
         """
         print("\n🔄 Création des embeddings...")
         print("   ⚠️  Cela peut prendre plusieurs minutes sur le dataset complet")
         
-        # Créer un texte enrichi pour chaque recette
-        def create_search_text(row):
-            text_parts = []
-            
-            # Nom de la recette
-            if 'name' in row and pd.notna(row['name']):
-                text_parts.append(f"Recette: {row['name']}")
-            
-            # Ingrédients (le plus important !)
-            if 'ingredients_list' in row and row['ingredients_list']:
-                ingredients_text = ", ".join(row['ingredients_list'])
-                text_parts.append(f"Ingrédients: {ingredients_text}")
-            
-            # Tags/catégories si disponibles
-            if 'tags' in row and pd.notna(row['tags']):
-                try:
-                    tags = eval(row['tags']) if isinstance(row['tags'], str) else row['tags']
-                    if tags:
-                        text_parts.append(f"Catégories: {', '.join(tags[:5])}")
-                except:
-                    pass
-            
-            return " | ".join(text_parts)
+        # Créer les embeddings pour les noms des recettes
+        if 'name' in self.recipes_df.columns:
+            print("   Encodage des noms des recettes...")
+            recipe_names = self.recipes_df['name'].apply(self.clean_text).tolist()
+            name_embeddings = self.model.encode(
+                recipe_names,
+                show_progress_bar=True,
+                batch_size=32
+            )
+        else:
+            name_embeddings = None
         
-        self.recipes_df['search_text'] = self.recipes_df.apply(create_search_text, axis=1)
-        
-        # Créer les embeddings
-        texts = self.recipes_df['search_text'].tolist()
-        
-        print(f"   Encodage de {len(texts)} recettes...")
-        self.embeddings = self.model.encode(
-            texts,
+        # Créer les embeddings pour les ingrédients des recettes
+        if 'ingredients_list' in self.recipes_df.columns:
+            print("   Encodage des ingrédients des recettes...")
+            ingredients_embeddings = self.model.encode(
+            self.recipes_df['ingredients_list'].apply(
+                lambda lst: ", ".join([self.clean_text(ing) for ing in lst])
+            ).tolist(),
             show_progress_bar=True,
             batch_size=32
-        )
-        
+            )
+            
+        else:
+            ingredients_embeddings = None
+
+        self.name_embeddings = name_embeddings
+        self.ingredients_embeddings = ingredients_embeddings
+
         # Sauvegarder les embeddings
         with open(save_path, 'wb') as f:
             pickle.dump({
-                'embeddings': self.embeddings,
+                'name_embeddings': name_embeddings,
+                'ingredients_embeddings': ingredients_embeddings,
                 'recipe_ids': self.recipes_df['id'].tolist() if 'id' in self.recipes_df.columns else list(range(len(self.recipes_df)))
             }, f)
         
         print(f"✓ Embeddings créés et sauvegardés dans {save_path}")
-        print(f"   Shape: {self.embeddings.shape}")
+        if name_embeddings is not None:
+            print(f"   Shape de l'embeddings du noms: {name_embeddings.shape}")
+        if ingredients_embeddings is not None:
+            print(f"   Shape des embeddings des ingrédients: {ingredients_embeddings.shape}")
         
-        return self.embeddings
+        return name_embeddings, ingredients_embeddings
     
     def load_embeddings(self, embeddings_path='recipe_embeddings.pkl'):
         """Charge des embeddings pré-calculés (plus rapide)"""
@@ -123,10 +130,12 @@ class RecipeRAGSystem:
         
         with open(embeddings_path, 'rb') as f:
             data = pickle.load(f)
-            self.embeddings = data['embeddings']
+            self.name_embeddings = data.get('name_embeddings', None)
+            self.ingredients_embeddings = data.get('ingredients_embeddings', None)
         
-        print(f"✓ Embeddings chargés: {self.embeddings.shape}")
-        return self.embeddings
+        print(f"✓ Embeddings du nom chargés")
+        print(f"✓ Embeddings des ingrédients chargés")
+        return self.name_embeddings, self.ingredients_embeddings
     
     def search_recipes(self, user_ingredients: List[str], top_k=5) -> List[Dict]:
         """
@@ -139,14 +148,14 @@ class RecipeRAGSystem:
         Returns:
             Liste de dictionnaires avec les recettes recommandées
         """
-        # Créer la requête
-        query = f"Recette avec ingrédients: {', '.join(user_ingredients)}"
         
-        # Encoder la requête
-        query_embedding = self.model.encode([query])[0]
+        user_ingredients_embedding = self.model.encode(", ".join(self.clean_text(ing) for ing in user_ingredients))
         
         # Calculer la similarité avec toutes les recettes
-        similarities = cosine_similarity([query_embedding], self.embeddings)[0]
+        similarities = cosine_similarity(
+            user_ingredients_embedding.reshape(1, -1),
+            self.ingredients_embeddings
+        )[0]
         
         # Obtenir les indices des meilleures recettes
         top_indices = np.argsort(similarities)[::-1][:top_k]
@@ -360,19 +369,4 @@ def interactive_recipe_search():
 # ============================================
 
 if __name__ == "__main__":
-    # OPTION 1: Interface interactive (recommandé)
     interactive_recipe_search()
-    
-    # OPTION 2: Exemple programmatique
-    """
-    rag = RecipeRAGSystem()
-    rag.load_recipes('recipes_sample.csv')
-    rag.create_embeddings('recipes_sample_embeddings.pkl')
-    
-    results = rag.search_with_filters(
-        user_ingredients=['chicken', 'garlic', 'lemon'],
-        top_k=5
-    )
-    
-    rag.display_results(results)
-    """
