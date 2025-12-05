@@ -77,7 +77,8 @@ source venv/bin/activate
 ### 3. Installer les dépendances
 
 ```bash
-pip install pandas numpy matplotlib seaborn sentence-transformers scikit-learn
+pip install pandas numpy matplotlib seaborn sentence-transformers scikit-learn Unidecode spacy
+python3 -m spacy download en_core_web_sm
 ```
 
 **Liste complète des packages :**
@@ -102,6 +103,13 @@ rm -rf food-com-recipes-and-user-interactions.zip
 2. Télécharger le dataset
 3. Extraire dans le dossier `food-com-recipes-and-user-interactions/`
 
+### 5. Installation de ollama
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.2
+```
+
 ## 📁 Structure du projet
 
 ```
@@ -120,6 +128,7 @@ rm -rf food-com-recipes-and-user-interactions.zip
 │
 ├── phase1_exploration.py            # Script d'exploration et préparation des données
 ├── phase2_rag.py                    # Système RAG de recommandation
+├── phase3_llm_local.py              # Chat conversationnel avec LLM
 ├── README.md                        # Ce fichier
 └── requirements.txt                 # Dépendances Python (optionnel)
 ```
@@ -202,6 +211,15 @@ Chemin du fichier recettes (défaut: recipes_sample.csv): recipes/recipes_prepar
 **Première fois :** 2-5 minutes (création des embeddings)  
 **Fois suivantes :** < 1 seconde (embeddings en cache)
 
+### Phase 3 : Chat conversationnel avec LLM
+
+**But :** Permettre l'utilisation d'un langage naturel
+
+```bash
+ollama serve
+python phase3_llm_local.py
+```
+
 ---
 
 ## 🧠 Comment ça marche
@@ -260,8 +278,9 @@ Le système calcule deux scores :
 
 ### 🚧 Phase 3 : Intégration LLM (En cours)
 - Génération de réponses en langage naturel
-- Fine-tuning (optionnel)
-- Amélioration de l'expérience utilisateur
+- Mémoire des échanges
+- Intégration du RAG pour trouver les recettes
+- Llama 3.2 via Ollama pour générer les réponses
 
 ### 🔮 Phase 4 : Interface Web (Futur)
 - Application Streamlit/Gradio
@@ -424,29 +443,6 @@ results = rag.search_with_filters(
 ---
 
 ## 🚀 Prochaines étapes
-
-### Phase 3 : Intégration d'un LLM
-
-Plusieurs options possibles :
-
-**Option A : LLM local (gratuit)**
-- LLaMA 2 / Mistral avec Ollama
-- GPT4All
-- Avantages : Gratuit, privé, offline
-- Inconvénient : Nécessite plus de ressources
-
-**Option B : API externe (payant)**
-- OpenAI GPT-4
-- Anthropic Claude
-- Google Gemini
-- Avantages : Très performant, rapide
-- Inconvénient : Coût par requête
-
-**Option C : Fine-tuning (avancé)**
-- Fine-tuner un petit modèle (GPT-2, DistilGPT)
-- Sur le dataset Food.com
-- Avantages : Optimisé pour les recettes
-- Inconvénient : Temps et ressources nécessaires
 
 ### Phase 4 : Interface utilisateur
 
